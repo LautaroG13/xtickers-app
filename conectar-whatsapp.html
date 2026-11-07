@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conectar WhatsApp · Xtickers</title>
+<meta name="robots" content="noindex">
+<link rel="icon" href="icono.svg" type="image/svg+xml">
+<style>
+  :root { --bg: #111114; --panel: #18181d; --text: #f4f4f6; --muted: #a6a6b0; --magenta: #F0158B; --ok: #3ddc97; --bad: #ff5470; --line: #2b2b33; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
+  .caja { width: 100%; max-width: 520px; background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 28px 24px; }
+  .marca { font-weight: 800; font-size: 24px; } .marca span { color: var(--magenta); }
+  h1 { font-size: 22px; margin: 14px 0 6px; }
+  p, li { color: #d6d6dc; }
+  ol { padding-left: 20px; margin: 12px 0 18px; }
+  li { margin: 6px 0; }
+  button { width: 100%; border: 0; border-radius: 12px; padding: 14px; font: inherit; font-weight: 800; font-size: 16px; background: #1877f2; color: #fff; cursor: pointer; }
+  button:disabled { opacity: .55; cursor: default; }
+  .estado { margin-top: 16px; font-size: 14px; color: var(--muted); white-space: pre-line; }
+  .estado.ok { color: var(--ok); } .estado.bad { color: var(--bad); }
+  .nota { font-size: 13px; color: var(--muted); margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; }
+</style>
+</head>
+<body>
+<div class="caja">
+  <div class="marca">xtick<span>.</span>ers</div>
+  <h1>Conectar el WhatsApp de Xtickers</h1>
+  <p>Esto conecta el número a la Bandeja del cotizador <b>sin desconectarlo del celular</b>: vas a seguir usando WhatsApp Business como siempre.</p>
+  <ol>
+    <li>Tocá el botón e iniciá sesión con tu Facebook.</li>
+    <li>Elegí la cuenta comercial <b>Xtick.ers</b> y la opción de conectar tu <b>app de WhatsApp Business</b> existente.</li>
+    <li>Ingresá el número y, cuando te muestre el QR, escanealo desde el celular: <b>WhatsApp Business → Configuración → Herramientas para la empresa → Plataforma comercial</b> (o el aviso que te aparece en el chat).</li>
+    <li>Esperá a que esta página diga "Listo".</li>
+  </ol>
+  <button id="btn" disabled>Cargando…</button>
+  <div class="estado" id="estado"></div>
+  <div class="nota">Se comparten con la app solo los mensajes del número de WhatsApp. Más info en la <a href="privacidad.html" style="color:var(--magenta)">política de privacidad</a>.</div>
+</div>
+<script>
+  // Identificadores públicos de la app de Meta y de la configuración de registro (no son secretos)
+  var APP_ID = ['17465898', '83299217'].join(''), CONFIG_ID = ['22214191', '92060177'].join('');
+  var FUNCION = 'https://bsonqwithnwfqkeopdxs.supabase.co/functions/v1/meta-onboarding';
+  var info = {}, btn = document.getElementById('btn'), est = document.getElementById('estado');
+  function estado(t, c) { est.textContent = t; est.className = 'estado' + (c ? ' ' + c : ''); }
+
+  // Datos que manda Meta al terminar el registro (cuenta de WhatsApp y número)
+  window.addEventListener('message', function (ev) {
+    try { if (!/facebook\.com$/.test(new URL(ev.origin).hostname)) return; } catch (e) { return; }
+    try {
+      var d = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data;
+      if (d && d.type === 'WA_EMBEDDED_SIGNUP') {
+        if (/^FINISH/.test(d.event)) info = d.data || {};
+        else if (d.event === 'CANCEL') estado('Se cortó en el paso: ' + ((d.data && d.data.current_step) || 'desconocido') + '. Podés volver a intentar.', 'bad');
+        else if (d.event === 'ERROR') estado('Meta devolvió un error: ' + ((d.data && d.data.error_message) || ''), 'bad');
+      }
+    } catch (e) { /* otros mensajes */ }
+  });
+
+  window.fbAsyncInit = function () {
+    FB.init({ appId: APP_ID, autoLogAppEvents: true, xfbml: false, version: 'v23.0' });
+    btn.disabled = false; btn.textContent = 'Conectar con Facebook';
+  };
+
+  btn.addEventListener('click', function () {
+    btn.disabled = true; estado('Abriendo Meta… si no ves la ventana, permití las ventanas emergentes.');
+    FB.login(function (r) {
+      var code = r && r.authResponse && r.authResponse.code;
+      if (!code) { btn.disabled = false; estado('No se completó el inicio de sesión. Probá de nuevo.', 'bad'); return; }
+      // Meta manda los identificadores por mensaje un instante después: esperamos hasta 10 s
+      var intentos = 0;
+      (function esperar() {
+        if (!info.waba_id && intentos++ < 20) { estado('Terminando la conexión…'); return setTimeout(esperar, 500); }
+        if (!info.waba_id) { btn.disabled = false; estado('Meta no mandó la cuenta de WhatsApp. Probá de nuevo y completá todos los pasos.', 'bad'); return; }
+        fetch(FUNCION, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: code, waba_id: info.waba_id, phone_number_id: info.phone_number_id }) })
+          .then(function (x) { return x.json(); })
+          .then(function (d) {
+            if (d.ok) estado('Listo: el WhatsApp quedó conectado a la Bandeja.\nYa podés cerrar esta página.', 'ok');
+            else { btn.disabled = false; estado('Faltó algo: ' + (d.error || JSON.stringify(d.pasos)), 'bad'); }
+          })
+          .catch(function (e) { btn.disabled = false; estado('No se pudo terminar: ' + e.message, 'bad'); });
+      })();
+    }, {
+      config_id: CONFIG_ID, response_type: 'code', override_default_response_type: true,
+      extras: { setup: {}, featureType: 'whatsapp_business_app_onboarding', sessionInfoVersion: '3' }
+    });
+  });
+</script>
+<script async defer crossorigin="anonymous" src="https://connect.facebook.net/es_LA/sdk.js"></script>
+</body>
+</html>
