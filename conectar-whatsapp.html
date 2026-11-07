@@ -42,7 +42,7 @@
   // Identificadores públicos de la app de Meta y de la configuración de registro (no son secretos)
   var APP_ID = ['17465898', '83299217'].join(''), CONFIG_ID = ['22214191', '92060177'].join('');
   var FUNCION = 'https://bsonqwithnwfqkeopdxs.supabase.co/functions/v1/meta-onboarding';
-  var info = {}, btn = document.getElementById('btn'), est = document.getElementById('estado');
+  var info = {}, eventos = [], btn = document.getElementById('btn'), est = document.getElementById('estado');
   function estado(t, c) { est.textContent = t; est.className = 'estado' + (c ? ' ' + c : ''); }
 
   // Datos que manda Meta al terminar el registro (cuenta de WhatsApp y número)
@@ -51,6 +51,7 @@
     try {
       var d = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data;
       if (d && d.type === 'WA_EMBEDDED_SIGNUP') {
+        eventos.push(d.event + (d.data && d.data.current_step ? ' (' + d.data.current_step + ')' : ''));
         if (/^FINISH/.test(d.event)) info = d.data || {};
         else if (d.event === 'CANCEL') estado('Se cortó en el paso: ' + ((d.data && d.data.current_step) || 'desconocido') + '. Podés volver a intentar.', 'bad');
         else if (d.event === 'ERROR') estado('Meta devolvió un error: ' + ((d.data && d.data.error_message) || ''), 'bad');
@@ -67,18 +68,19 @@
     btn.disabled = true; estado('Abriendo Meta… si no ves la ventana, permití las ventanas emergentes.');
     FB.login(function (r) {
       var code = r && r.authResponse && r.authResponse.code;
-      if (!code) { btn.disabled = false; estado('No se completó el inicio de sesión. Probá de nuevo.', 'bad'); return; }
+      if (!code) { btn.disabled = false; estado('No se completó el inicio de sesión. Probá de nuevo.\nEventos de Meta: ' + (eventos.join(', ') || 'ninguno'), 'bad'); return; }
       // Meta manda los identificadores por mensaje un instante después: esperamos hasta 10 s
       var intentos = 0;
       (function esperar() {
-        if (!info.waba_id && intentos++ < 20) { estado('Terminando la conexión…'); return setTimeout(esperar, 500); }
-        if (!info.waba_id) { btn.disabled = false; estado('Meta no mandó la cuenta de WhatsApp. Probá de nuevo y completá todos los pasos.', 'bad'); return; }
+        if (!info.waba_id && intentos++ < 10) { estado('Terminando la conexión…'); return setTimeout(esperar, 500); }
+        // si Meta no mandó la cuenta por mensaje, el servidor la averigua con el code
         fetch(FUNCION, { method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ code: code, waba_id: info.waba_id, phone_number_id: info.phone_number_id }) })
           .then(function (x) { return x.json(); })
           .then(function (d) {
-            if (d.ok) estado('Listo: el WhatsApp quedó conectado a la Bandeja.\nYa podés cerrar esta página.', 'ok');
-            else { btn.disabled = false; estado('Faltó algo: ' + (d.error || JSON.stringify(d.pasos)), 'bad'); }
+            var det = '\n\nDetalle para Claude: ' + JSON.stringify({ eventos: eventos, pasos: d.pasos, waba: d.waba_id, tel: d.phone_number_id, error: d.error });
+            if (d.ok) estado('Listo: el WhatsApp quedó conectado a la Bandeja.\nYa podés cerrar esta página.' + det, 'ok');
+            else { btn.disabled = false; estado('Faltó algo: ' + (d.error || JSON.stringify(d.pasos)) + det, 'bad'); }
           })
           .catch(function (e) { btn.disabled = false; estado('No se pudo terminar: ' + e.message, 'bad'); });
       })();
